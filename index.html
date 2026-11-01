@@ -325,7 +325,7 @@ function buildEdgeVec(){
 }
 
 /* ── 方向感測（沿用觀星圖的寫法） ── */
-const sensor={on:false,got:false,f:null,u:null,r:null,off:null,hasAbs:false};
+const sensor={on:false,got:false,f:null,u:null,r:null,off:null,hasAbs:false,flatOk:false,ios:false};
 const v3=(x,y,z)=>[x,y,z];
 function nrm(v){const l=Math.hypot(v[0],v[1],v[2])||1;return [v[0]/l,v[1]/l,v[2]/l]}
 const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
@@ -353,10 +353,16 @@ function onOrient(e){
   if(e.beta==null) return;
   let al;
   if(typeof e.webkitCompassHeading==='number'&&!isNaN(e.webkitCompassHeading)){
-    // iPad：alpha 不是以北為準，用指南針角度換算；直立時不更新換算值，避開萬向鎖
+    // iPad：alpha 是陀螺儀的相對角度，要靠指南針換算成以北為準。
+    // 只有平放時指南針角度才可靠；直立（尤其橫拿）時系統回報的角度會在兩種算法間跳來跳去，
+    // 以前直立時也一直更新，畫面就會自己左右漂。現在拿起來之後只靠陀螺儀，北方固定不動。
+    sensor.ios=true;
     const est=norm(360-e.webkitCompassHeading-(e.alpha||0));
-    if(sensor.off==null) sensor.off=est;
-    else if(Math.abs(Math.cos(e.beta*D2R))>0.25){const d=norm(est-sensor.off+180)-180;sensor.off=norm(sensor.off+d*0.12)}
+    const flat=Math.abs(e.beta)<35&&Math.abs(e.gamma||0)<35;
+    if(flat){
+      if(!sensor.flatOk){sensor.off=est;sensor.flatOk=true;flatHint()}
+      else{const d=norm(est-sensor.off+180)-180;sensor.off=norm(sensor.off+d*0.08)}
+    }else if(sensor.off==null) sensor.off=est;   // 還沒平放過：先用粗估值
     al=norm((e.alpha||0)+sensor.off);
   }else{
     if(e.type!=='deviceorientationabsolute'&&!e.absolute&&sensor.hasAbs) return;
@@ -533,7 +539,8 @@ function drawLabels(ar){
   const cand=[];
   for(const v of VIEW.vis){
     if(!shown(v)) continue;
-    const p=proj(v.az,v.alt); if(!p||p.x<-20||p.x>W+20||p.y<-40||p.y>H+40) continue;
+    // 只看左右在不在畫面裡；上下超出去也照標（iPad 拿得太低或太高，山名會貼著畫面邊緣）
+    const p=proj(v.az,v.alt); if(!p||p.x<-20||p.x>W+20) continue;
     // 越遠的小山越不重要
     let imp=v.imp-(v.p.c===0?Math.min(150,v.D/1000*3):0)+(v.ok?0:-1200);
     cand.push({v,x:p.x,y:p.y,imp});
@@ -544,19 +551,28 @@ function drawLabels(ar){
   for(const c of cand){
     if(placed.some(x=>Math.abs(x-c.x)<gap)) continue;
     const name=c.v.p.n, n=[...name].length;
-    // 標籤底部放在這一帶稜線上方
+    // 標籤底部放在這一帶稜線上方；上下放不下時改成貼著畫面上緣或下緣，不讓山名消失
+    const labH=n*fs*1.08+fs*1.3, botLimit=H-(ar?150:130);
     const skyY=localSkyY(c.v.az,ar);
-    let bottom=Math.min(c.y,skyY??c.y)-16-((placed.length%3)*0);
-    const top=bottom-n*fs*1.08-fs*1.3;
-    if(top<topSafe){ if(c.y-n*fs*1.08-fs*1.3-10<topSafe) continue; bottom=topSafe+n*fs*1.08+fs*1.3 }
+    let bottom=Math.min(c.y,skyY??c.y)-16;
+    if(bottom-labH<topSafe) bottom=topSafe+labH;
+    if(bottom>botLimit) bottom=Math.max(topSafe+labH,botLimit);
     placed.push(c.x);
-    const col=COL[c.v.p.c], ok=c.v.ok;
+    const col=COL[c.v.p.c], ok=c.v.ok, top=bottom-labH;
+    const py=Math.max(-2,Math.min(H+2,c.y)), off=c.y<0||c.y>H;
     ctx.globalAlpha=ok?1:0.7;
-    // 引線
+    // 引線：從山頂連到標籤（山頂在標籤上方就往上連）
     ctx.strokeStyle=ok?'rgba(255,255,255,.85)':'rgba(255,255,255,.6)'; ctx.lineWidth=1.2;
-    if(!ok) ctx.setLineDash([4,4]);
-    ctx.beginPath(); ctx.moveTo(c.x,c.y-3); ctx.lineTo(c.x,bottom); ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillStyle=col; ctx.beginPath(); ctx.arc(c.x,c.y,3.5,0,7); ctx.fill();
+    if(!ok||off) ctx.setLineDash([4,4]);
+    ctx.beginPath();
+    if(py>=bottom){ctx.moveTo(c.x,py-3);ctx.lineTo(c.x,bottom)}
+    else if(py<=top){ctx.moveTo(c.x,py+3);ctx.lineTo(c.x,top)}
+    ctx.stroke(); ctx.setLineDash([]);
+    if(!off){ctx.fillStyle=col; ctx.beginPath(); ctx.arc(c.x,c.y,3.5,0,7); ctx.fill()}
+    else{ // 山頂在畫面外：邊緣畫個小箭頭
+      const ey=c.y<0?6:H-6, s1=c.y<0?1:-1;
+      ctx.fillStyle='rgba(255,255,255,.9)'; ctx.beginPath(); ctx.moveTo(c.x,ey-s1*4); ctx.lineTo(c.x-6,ey+s1*6); ctx.lineTo(c.x+6,ey+s1*6); ctx.closePath(); ctx.fill();
+    }
     // 直書山名
     ctx.font=`700 ${fs}px ${font}`;
     const chars=[...name], tTop=bottom-chars.length*fs*1.08;
@@ -568,7 +584,7 @@ function drawLabels(ar){
     ctx.fillStyle='#10202b'; ctx.font=`700 ${Math.round(fs*0.66)}px ${font}`;
     ctx.fillText(c.v.p.c===1?'百':c.v.p.c===2?'小':c.v.p.c===3?'3K':'山',c.x,by+0.5);
     ctx.globalAlpha=1;
-    hits.push({x0:c.x-fs*0.8,x1:c.x+fs*0.8,y0:by-fs*0.7,y1:c.y+8,v:c.v});
+    hits.push({x0:c.x-fs*0.8,x1:c.x+fs*0.8,y0:Math.min(by-fs*0.7,py),y1:Math.max(bottom,py)+8,v:c.v});
   }
   ctx.textBaseline='alphabetic';
 }
@@ -683,7 +699,13 @@ function startCalib(v){
   $('calNo')&&($('calNo').onclick=endCalib);
   requestDraw();
 }
-function endCalib(){st.calib=false;st.calPeak=null;$('bCal').classList.remove('on');hint('');requestDraw()}
+// 還沒平放過就提醒一次；平放抓到北方後收掉
+function flatHint(){
+  if(st.calib) return;
+  if(st.mode==='ar'&&sensor.ios&&!sensor.flatOk) hint('先把 iPad <b>平放</b>在桌上或窗台 2 秒，讓指南針抓到北方，<br>再拿起來對準山。拿起來之後方向就不會再自己跑了。');
+  else hint('');
+}
+function endCalib(){st.calib=false;st.calPeak=null;$('bCal').classList.remove('on');hint('');flatHint();requestDraw()}
 function saveCal(){store.set('azOff',st.azOff);store.set('altOff',st.altOff)}
 
 /* ── 手勢：全景拖曳、縮放；相機模式校正時拖曳 ── */
@@ -737,6 +759,7 @@ async function setMode(m){
     const ok=await startCam();
     if(!ok) toast('打不開相機，先用沒有相機的方式顯示（稜線還是會跟著 iPad 轉）');
     st.mode='ar'; document.body.classList.add('ar');
+    setTimeout(flatHint,600);
     if(!store.get('calTold',0)){store.set('calTold',1);setTimeout(()=>toast('第一次用：如果山名跟真的山歪掉，按「🧭 校正」對一下就好'),1200)}
   }else{
     stopCam(); st.mode='pano'; document.body.classList.remove('ar'); endCalib();
