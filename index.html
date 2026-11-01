@@ -1,0 +1,845 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="robots" content="noindex">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="認山">
+<meta name="theme-color" content="#0e1a24">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png">
+<title>窗外的山</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=LXGW+WenKai+TC:wght@400;700&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+/* 版面：整個螢幕是山的畫面（全景圖或相機），上方是地點，下方是按鈕列；
+   點山名或按「清單」「地點」會從下面滑出一張卡。單一深色主題，戶外對著窗外看比較不刺眼。 */
+:root{
+  --bg:#0e1a24;
+  --panel:#15232f;
+  --glass:rgba(16,28,38,.88);
+  --line:#2a3d4d;
+  --ink:#eef3f6;
+  --mute:#9fb3c1;
+  --baiyue:#ff7a59;     /* 百岳 */
+  --xiao:#5fd39a;       /* 小百岳 */
+  --high:#f2c14e;       /* 3000 公尺以上（非百岳） */
+  --other:#d7e3ea;      /* 一般山峰 */
+  --accent:#6cc4ff;
+  --f-display:"LXGW WenKai TC","PingFang TC","Noto Sans TC",serif;
+  --f-body:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:var(--f-body);overflow:hidden;
+  -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;touch-action:none}
+button{font:inherit;color:inherit}
+#stage{position:fixed;inset:0;overflow:hidden;background:#0b141c}
+#cam{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none;transform-origin:50% 50%}
+#cv{position:absolute;inset:0;width:100%;height:100%;display:block}
+body.ar #cam{display:block}
+
+/* 上方：地點 */
+#top{position:fixed;left:0;right:0;top:0;padding:calc(env(safe-area-inset-top,0px) + 10px) 16px 0;display:flex;gap:10px;align-items:flex-start;pointer-events:none;z-index:5}
+#top>*{pointer-events:auto}
+.chip{background:var(--glass);border:1px solid var(--line);border-radius:999px;padding:8px 14px;font-size:15px;line-height:1.3;
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);cursor:pointer;text-align:left}
+#locChip b{font-family:var(--f-display);font-size:17px;font-weight:700;margin-right:6px}
+#locChip small{color:var(--mute);font-size:13px}
+#heading{margin-left:auto;font-variant-numeric:tabular-nums;cursor:default}
+#heading b{font-family:var(--f-display);font-size:17px}
+
+/* 下方：正前方的山＋按鈕列 */
+#aim{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom,0px) + 86px);z-index:4;
+  background:var(--glass);border:1px solid var(--line);border-radius:14px;padding:8px 16px;font-size:15px;white-space:nowrap;
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);display:none;cursor:pointer;max-width:calc(100vw - 32px);overflow:hidden;text-overflow:ellipsis}
+#aim b{font-family:var(--f-display);font-size:20px;margin:0 4px}
+#cross{position:fixed;left:50%;top:50%;width:44px;height:44px;margin:-22px 0 0 -22px;pointer-events:none;z-index:3;display:none}
+#cross::before,#cross::after{content:"";position:absolute;background:rgba(255,255,255,.85);box-shadow:0 0 3px rgba(0,0,0,.6)}
+#cross::before{left:21px;top:0;width:2px;height:44px}
+#cross::after{top:21px;left:0;height:2px;width:44px}
+body.ar #cross{display:block}
+#bar{position:fixed;left:0;right:0;bottom:0;z-index:5;padding:0 16px calc(env(safe-area-inset-bottom,0px) + 12px);display:flex;gap:8px;justify-content:center;flex-wrap:wrap;pointer-events:none}
+#bar button{pointer-events:auto;background:var(--glass);border:1px solid var(--line);border-radius:14px;padding:10px 16px;font-size:16px;min-width:64px;
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);cursor:pointer}
+#bar button.on{background:#1f4a66;border-color:var(--accent)}
+#bar button .ic{display:block;font-size:20px;line-height:1.1}
+#zoomBox{position:fixed;right:16px;top:50%;transform:translateY(-50%);z-index:4;display:flex;flex-direction:column;gap:8px}
+#zoomBox button{width:48px;height:48px;border-radius:50%;background:var(--glass);border:1px solid var(--line);font-size:22px;cursor:pointer}
+#zoomBox span{text-align:center;font-size:13px;color:var(--mute)}
+
+/* 底部滑出的卡 */
+.sheet{position:fixed;left:50%;bottom:0;transform:translate(-50%,105%);width:min(620px,100vw);max-height:78vh;overflow:auto;z-index:20;
+  background:var(--panel);border:1px solid var(--line);border-bottom:0;border-radius:20px 20px 0 0;padding:18px 20px calc(env(safe-area-inset-bottom,0px) + 20px);
+  transition:transform .28s ease;touch-action:pan-y;-webkit-user-select:text;user-select:text}
+.sheet.open{transform:translate(-50%,0)}
+.sheet h2{font-family:var(--f-display);font-size:24px;margin:0 0 4px;font-weight:700}
+.sheet .x{position:sticky;top:0;float:right;background:#22384a;border:0;border-radius:50%;width:36px;height:36px;font-size:18px;cursor:pointer;margin:-4px -6px 0 8px}
+.sheet p{margin:8px 0;line-height:1.7}
+.mute{color:var(--mute)}
+.badge{display:inline-block;border-radius:999px;padding:3px 10px;font-size:14px;font-weight:700;margin:2px 4px 2px 0;color:#10202b}
+.b1{background:var(--baiyue)}.b2{background:var(--xiao)}.b3{background:var(--high)}.b0{background:var(--other)}
+.tag{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:14px;margin:2px 4px 2px 0}
+.facts{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:12px 0;font-size:16px}
+.facts dt{color:var(--mute)}.facts dd{margin:0}
+.btn{display:inline-block;background:#22384a;border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin:4px 6px 4px 0;cursor:pointer;font-size:15px;text-decoration:none;color:var(--ink)}
+.btn.pri{background:#1f4a66;border-color:var(--accent)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;margin:10px 0}
+.grid .btn{margin:0;text-align:center}
+#map{height:260px;border-radius:12px;margin:10px 0;background:#203040}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 0}
+.step{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.step button{background:#22384a;border:0;width:44px;height:40px;font-size:20px;cursor:pointer}
+.step span{min-width:56px;text-align:center;font-size:17px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.seg button{background:transparent;border:0;padding:8px 12px;cursor:pointer;font-size:15px}
+.seg button.on{background:#1f4a66}
+#list ul{list-style:none;padding:0;margin:8px 0}
+#list li{display:flex;gap:10px;align-items:center;padding:10px 4px;border-bottom:1px solid var(--line);cursor:pointer}
+#list li .dir{width:62px;color:var(--mute);font-size:14px;font-variant-numeric:tabular-nums}
+#list li b{font-family:var(--f-display);font-size:18px}
+#list li .km{margin-left:auto;color:var(--mute);font-size:14px;white-space:nowrap}
+.dot{width:10px;height:10px;border-radius:50%;flex:none}
+#hint{position:fixed;left:50%;top:calc(env(safe-area-inset-top,0px) + 64px);transform:translateX(-50%);z-index:6;background:#1f4a66;border:1px solid var(--accent);
+  border-radius:14px;padding:10px 16px;font-size:16px;display:none;max-width:calc(100vw - 32px);text-align:center;line-height:1.6}
+#hint .btn{margin:6px 4px 0}
+#busy{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:30;background:rgba(10,18,26,.6);font-size:18px}
+#busy[hidden]{display:none}
+#toast{position:fixed;left:50%;top:40%;transform:translateX(-50%);z-index:40;background:var(--glass);border:1px solid var(--line);border-radius:14px;padding:12px 18px;display:none;max-width:calc(100vw - 32px);text-align:center;line-height:1.6}
+.legend{display:flex;gap:12px;flex-wrap:wrap;font-size:14px;color:var(--mute);margin:8px 0}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+@media (max-width:560px){#bar button{padding:8px 10px;min-width:54px;font-size:14px}#locChip b{font-size:15px}}
+</style>
+</head>
+<body>
+<div id="stage"><video id="cam" playsinline muted autoplay></video><canvas id="cv"></canvas></div>
+<div id="cross"></div>
+<header id="top">
+  <button class="chip" id="locChip"><b>載入中</b><small></small></button>
+  <div class="chip" id="heading"></div>
+</header>
+<div id="hint"></div>
+<div id="aim"></div>
+<div id="zoomBox"><button id="zin" aria-label="放大">＋</button><span id="zlab"></span><button id="zout" aria-label="縮小">－</button></div>
+<nav id="bar">
+  <button id="bAr"><span class="ic">📷</span>對準山</button>
+  <button id="bPano" class="on"><span class="ic">🏔️</span>全景</button>
+  <button id="bList"><span class="ic">📋</span>清單</button>
+  <button id="bLoc"><span class="ic">📍</span>地點</button>
+  <button id="bCal"><span class="ic">🧭</span>校正</button>
+  <button id="bMore"><span class="ic">⚙️</span>設定</button>
+</nav>
+
+<section class="sheet" id="card"></section>
+<section class="sheet" id="list"></section>
+<section class="sheet" id="locSheet">
+  <button class="x" data-close>✕</button>
+  <h2>我在哪裡看山？</h2>
+  <p class="mute">位置會決定看得到哪些山。在窗邊用 iPad 的話，按「用我現在的位置」最準。</p>
+  <div class="row"><button class="btn pri" id="gps">📍 用我現在的位置</button><button class="btn" id="goHome">🏠 回到我家</button><button class="btn" id="setHome">把這裡設成我家</button></div>
+  <div class="row"><span>我在</span><div class="step"><button id="flDn">－</button><span id="flV">1 樓</span><button id="flUp">＋</button></div><span class="mute" id="flNote"></span></div>
+  <h3 style="margin:14px 0 4px;font-size:17px">常用地點</h3>
+  <div class="grid" id="presets"></div>
+  <h3 style="margin:14px 0 4px;font-size:17px">在地圖上點一下</h3>
+  <div id="map"></div>
+  <p class="mute" id="locNow"></p>
+</section>
+<section class="sheet" id="moreSheet">
+  <button class="x" data-close>✕</button>
+  <h2>設定</h2>
+  <div class="row"><span>顯示哪些山</span><div class="seg" id="segFilter"><button data-v="all">全部</button><button data-v="named">比較有名的</button><button data-v="major">只看百岳＋小百岳</button></div></div>
+  <div class="row"><span>被前面山擋住的百岳</span><div class="seg" id="segHidden"><button data-v="0">不顯示</button><button data-v="1">用虛線標出來</button></div></div>
+  <div class="row"><span>相機視角</span><div class="step"><button id="fovDn">－</button><span id="fovV"></span><button id="fovUp">＋</button></div><span class="mute">山名整排跟真的山對不齊、越旁邊差越多時調這個</span></div>
+  <div class="row"><button class="btn" id="resetCal">清除方向校正</button></div>
+  <div class="legend"><span><i class="dot b1"></i>台灣百岳</span><span><i class="dot b2"></i>台灣小百岳</span><span><i class="dot b3"></i>3000 公尺以上（非百岳）</span><span><i class="dot b0"></i>其他山峰</span></div>
+  <p class="mute" style="font-size:14px">地形：AWS Terrain Tiles（約 180 公尺一格）。山名與位置：© OpenStreetMap 貢獻者、維基百科〈臺灣百岳〉〈台灣小百岳〉。算的是「地形會不會擋住」，房子、樹、雲擋住的這裡算不到。</p>
+</section>
+<div id="busy">正在算你看得到哪些山…</div>
+<div id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+const D2R=Math.PI/180, R2D=180/Math.PI;
+const norm=a=>((a%360)+360)%360;
+const store={
+  get(k,d){try{const v=localStorage.getItem('mt.'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},
+  set(k,v){try{localStorage.setItem('mt.'+k,JSON.stringify(v))}catch(e){}}
+};
+const PRESETS=[
+  ['宜蘭市','宜蘭火車站一帶',24.7546,121.7580],['礁溪','礁溪火車站一帶',24.8270,121.7748],['羅東','羅東火車站一帶',24.6779,121.7740],
+  ['蘇澳','蘇澳新站一帶',24.6087,121.8277],['花蓮市','花蓮火車站一帶',23.9932,121.6013],['鳳林','鳳林火車站一帶',23.7445,121.4514],
+  ['玉里','玉里火車站一帶',23.3317,121.3117],['池上','池上火車站一帶',23.1250,121.2192],['台東市','台東火車站一帶',22.7935,121.1230],
+  ['台北101','觀景台 382 公尺',25.0339,121.5645,382],['合歡山武嶺','停車場',24.1373,121.2760,0],['阿里山','阿里山車站',23.5108,120.8031,0],
+  ['台中市','台中火車站一帶',24.1372,120.6867],['澎湖馬公','馬公市區',23.5655,119.5793],['嘉義市','嘉義火車站一帶',23.4792,120.4410],['高雄85大樓','高樓層約 300 公尺',22.6116,120.3001,300]
+];
+const st={
+  lat:null,lon:null,place:'',floor:store.get('floor',1),extra:0,
+  mode:'pano',filter:store.get('filter','named'),showHidden:store.get('hidden',0),
+  azOff:store.get('azOff',0),altOff:store.get('altOff',0),fov:store.get('fov',62),
+  panoAz:store.get('panoAz',210),panoAlt:3,ppd:22,arZoom:1,follow:false,calib:false,calPeak:null
+};
+const eyeH=()=>st.extra>0?st.extra:1.5+(st.floor-1)*3.2;
+
+/* ── 地形網格（Int16，北到南、西到東） ── */
+const G={lon0:119.3,lat1:25.35,k:600,nx:1651,ny:2101,d:null};
+function elev(lat,lon){
+  const x=(lon-G.lon0)*G.k, y=(G.lat1-lat)*G.k;
+  if(!(x>=0&&y>=0&&x<G.nx-1&&y<G.ny-1)) return -1;
+  const i=x|0,j=y|0,fx=x-i,fy=y-j,k=j*G.nx+i,d=G.d;
+  return (d[k]*(1-fx)+d[k+1]*fx)*(1-fy)+(d[k+G.nx]*(1-fx)+d[k+G.nx+1]*fx)*fy;
+}
+async function loadDEM(){
+  let buf;
+  try{
+    if(typeof DecompressionStream==='undefined') throw 0;
+    const r=await fetch('dem.bin.gz'); if(!r.ok) throw 0;
+    buf=await new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+  }catch(e){
+    const r=await fetch('dem.bin'); buf=await r.arrayBuffer();
+  }
+  G.d=new Int16Array(buf);
+}
+
+/* ── 山峰資料：c＝1 百岳、2 小百岳、3 三千公尺以上非百岳、0 其他；i＝到更高地形的距離（公里，越大越獨立） ── */
+let PEAKS=[];
+function importance(p){
+  if(p.c===1) return 2000-p.k*3+(p.g&&p.g.includes('五嶽')?400:0)+(p.g?p.g.length*20:0);
+  if(p.c===2) return 1500;
+  return Math.min(p.e,3500)/10+Math.min(p.i,25)*25+(p.c===3?250:0);
+}
+function rangeKm(p){
+  if(p.c===1) return 260;
+  if(p.c===2) return 150;
+  if(p.c===3) return 200;
+  return Math.max(3,Math.min(90,p.i*10+p.e/80));
+}
+function isNamed(p,v){return p.c>0||p.i>=2.5||(p.e>=1500&&p.i>=1)||(v&&v.top&&v.D<30000)}
+
+/* ── 計算：360 度地形剖面＋每座山看不看得到 ── */
+const RE=6371000/(1-0.13);            // 含大氣折射的等效地球半徑
+const PR={res:0.1,min:-12,max:32};     // 全景圖：每格 0.1 度
+PR.cols=Math.round(360/PR.res); PR.rows=Math.round((PR.max-PR.min)/PR.res);
+let VIEW=null;                         // 算好的結果
+function compute(){
+  const t0=performance.now();
+  const lat0=st.lat, lon0=st.lon, g0=Math.max(0,elev(lat0,lon0)), h0=g0+eyeH();
+  const mLat=R2D/6371000, mLon=mLat/Math.cos(lat0*D2R);
+  const {cols,rows,res,min}=PR;
+  const dist=new Float32Array(cols*rows), sky=new Float32Array(cols);
+  const ds=[],drop=[];
+  for(let d=40;d<265000;d+=Math.max(25,d/200)){ds.push(d);drop.push(d*d/(2*RE))}
+  const tMin=Math.tan(min*D2R);
+  for(let c=0;c<cols;c++){
+    const az=c*res*D2R, ca=Math.cos(az)*mLat, sa=Math.sin(az)*mLon;
+    let maxT=tMin, rp=0;
+    for(let i=0;i<ds.length;i++){
+      const d=ds[i];
+      if((4000-h0-drop[i])/d<maxT) break;      // 再遠也不可能更高了
+      const h=elev(lat0+d*ca,lon0+d*sa); if(h<0) break;
+      const t=(h-h0-drop[i])/d;
+      if(t>maxT){
+        let r=Math.floor((Math.atan(t)*R2D-min)/res); if(r>=rows) r=rows-1;
+        for(let y=rp;y<=r;y++) dist[y*cols+c]=d;
+        if(r+1>rp) rp=r+1;
+        maxT=t;
+      }
+    }
+    sky[c]=Math.atan(maxT)*R2D;
+  }
+  // 稜線：往上一格突然變很遠＝前面那道山的輪廓
+  const edges=[];
+  for(let c=0;c<cols;c++){
+    for(let r=0;r<rows-1;r++){
+      const a=dist[r*cols+c]; if(!a) continue;
+      const b=dist[(r+1)*cols+c];
+      if(!b||(b>a*1.18&&b-a>400)) edges.push(c,r,a);
+    }
+  }
+  // 每座山
+  const vis=[];
+  for(const p of PEAKS){
+    const dx=(p.lo-lon0)/mLon, dy=(p.la-lat0)/mLat, D=Math.hypot(dx,dy);
+    if(D>rangeKm(p)*1000) continue;
+    const az=norm(Math.atan2(dx,dy)*R2D);
+    if(D<150){vis.push({p,az,alt:-5,D,ok:true,here:true});continue}
+    const tP=(p.e-h0-D*D/(2*RE))/D;
+    const ux=dx/D*mLon, uy=dy/D*mLat, stop=D-Math.max(120,D*0.012);
+    let maxT=-1e9;
+    for(let d=40;d<stop;d+=Math.max(25,d/200)){
+      const h=elev(lat0+d*uy,lon0+d*ux); if(h<0) continue;
+      const t=(h-h0-d*d/(2*RE))/d; if(t>maxT) maxT=t;
+      if(maxT>tP+0.02) break;
+    }
+    const alt=Math.atan(tP)*R2D, block=Math.atan(maxT)*R2D-alt;
+    // top：這座山就是那個方向的天際線（窗外最前面那排山的山頂）
+    const top=block<0.03&&alt>=sky[Math.round(az/res)%cols]-0.35;
+    vis.push({p,az,alt,D,ok:block<0.03,block,top,imp:importance(p)+(top&&p.c===0?Math.max(0,260-D/1000*8):0)});
+  }
+  VIEW={lat0,lon0,g0,h0,dist,sky,edges,vis,img:null,edgeVec:null};
+  renderPano();
+  buildEdgeVec();
+  console.log('compute',Math.round(performance.now()-t0),'ms',vis.length,'peaks',edges.length/3,'edges');
+}
+
+/* 全景圖：天空漸層＋依距離上色的層層山稜（近的深、遠的淡） */
+function renderPano(){
+  const {cols,rows}=PR, V=VIEW, cv=document.createElement('canvas');
+  cv.width=cols; cv.height=rows;
+  const c2=cv.getContext('2d'), im=c2.createImageData(cols,rows), px=im.data;
+  for(let r=0;r<rows;r++){
+    const y=rows-1-r, alt=PR.min+r*PR.res;
+    const s=Math.max(0,Math.min(1,(alt+2)/30));
+    const sr=150-s*95, sg=190-s*95, sb=220-s*70;
+    for(let c=0;c<cols;c++){
+      const k=(y*cols+c)*4, d=V.dist[r*cols+c];
+      if(!d){px[k]=sr;px[k+1]=sg;px[k+2]=sb;px[k+3]=255;continue}
+      const f=Math.max(0,Math.min(1,Math.log(d/400)/Math.log(180000/400)));
+      px[k]=34+f*118; px[k+1]=58+f*112; px[k+2]=56+f*128; px[k+3]=255;
+    }
+  }
+  const E=V.edges;
+  for(let i=0;i<E.length;i+=3){
+    const c=E[i], r=E[i+1], d=E[i+2], k=((rows-1-r)*cols+c)*4;
+    const a=Math.max(0.35,1-Math.log(d/400)/Math.log(220000/400));
+    px[k]*=1-a*.75; px[k+1]*=1-a*.75; px[k+2]*=1-a*.65;
+  }
+  c2.putImageData(im,0,0);
+  V.img=cv;
+}
+// 相機模式用：把稜線點換成方向向量（東、北、上），畫的時候直接投影
+function buildEdgeVec(){
+  const E=VIEW.edges, n=E.length/3, v=new Float32Array(n*4);
+  for(let i=0;i<n;i++){
+    const az=E[i*3]*PR.res*D2R, h=(PR.min+(E[i*3+1]+.5)*PR.res)*D2R;
+    v[i*4]=Math.cos(h)*Math.sin(az); v[i*4+1]=Math.cos(h)*Math.cos(az); v[i*4+2]=Math.sin(h);
+    v[i*4+3]=Math.max(0.25,1-Math.log(E[i*3+2]/400)/Math.log(220000/400));
+  }
+  VIEW.edgeVec=v;
+}
+
+/* ── 方向感測（沿用觀星圖的寫法） ── */
+const sensor={on:false,got:false,f:null,u:null,r:null,off:null,hasAbs:false};
+const v3=(x,y,z)=>[x,y,z];
+function nrm(v){const l=Math.hypot(v[0],v[1],v[2])||1;return [v[0]/l,v[1]/l,v[2]/l]}
+const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+function screenAngle(){
+  if(typeof window.orientation==='number') return window.orientation;
+  return (screen.orientation&&screen.orientation.angle)||0;
+}
+function attitude(al,be,ga){
+  const a=al*D2R,b=be*D2R,g=ga*D2R;
+  const ca=Math.cos(a),sa=Math.sin(a),cb=Math.cos(b),sb=Math.sin(b),cg=Math.cos(g),sg=Math.sin(g);
+  const X=v3(ca*cg-sa*sb*sg, cg*sa+ca*sb*sg, -cb*sg);
+  const Y=v3(-cb*sa, ca*cb, sb);
+  const Z=v3(cg*sa*sb+ca*sg, sa*sg-ca*cg*sb, cb*cg);
+  const th=screenAngle()*D2R, s_=Math.sin(th), ct=Math.cos(th);
+  const f=v3(-Z[0],-Z[1],-Z[2]);
+  const u=v3(s_*X[0]+ct*Y[0], s_*X[1]+ct*Y[1], s_*X[2]+ct*Y[2]);
+  const r=v3(ct*X[0]-s_*Y[0], ct*X[1]-s_*Y[1], ct*X[2]-s_*Y[2]);
+  if(sensor.f){
+    const k=0.25, mix=(p,q)=>nrm([p[0]+(q[0]-p[0])*k,p[1]+(q[1]-p[1])*k,p[2]+(q[2]-p[2])*k]);
+    sensor.f=mix(sensor.f,f); sensor.u=mix(sensor.u,u); sensor.r=mix(sensor.r,r);
+  }else{sensor.f=f;sensor.u=u;sensor.r=r}
+  sensor.got=true;
+}
+function onOrient(e){
+  if(e.beta==null) return;
+  let al;
+  if(typeof e.webkitCompassHeading==='number'&&!isNaN(e.webkitCompassHeading)){
+    // iPad：alpha 不是以北為準，用指南針角度換算；直立時不更新換算值，避開萬向鎖
+    const est=norm(360-e.webkitCompassHeading-(e.alpha||0));
+    if(sensor.off==null) sensor.off=est;
+    else if(Math.abs(Math.cos(e.beta*D2R))>0.25){const d=norm(est-sensor.off+180)-180;sensor.off=norm(sensor.off+d*0.12)}
+    al=norm((e.alpha||0)+sensor.off);
+  }else{
+    if(e.type!=='deviceorientationabsolute'&&!e.absolute&&sensor.hasAbs) return;
+    al=e.alpha||0;
+  }
+  attitude(al,e.beta,e.gamma||0);
+  requestDraw();
+}
+async function startSensor(){
+  try{
+    if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function'){
+      const r=await DeviceOrientationEvent.requestPermission();
+      if(r!=='granted') return 'denied';
+    }
+  }catch(err){return 'blocked'}
+  if(!sensor.on){
+    if('ondeviceorientationabsolute' in window){sensor.hasAbs=true;window.addEventListener('deviceorientationabsolute',onOrient)}
+    window.addEventListener('deviceorientation',onOrient);
+    sensor.on=true;
+  }
+  return 'ok';
+}
+// 鏡頭看出去的方向（已加上校正）
+function aimDir(){
+  if(!sensor.f) return null;
+  const f=sensor.f;
+  return {alt:Math.asin(Math.max(-1,Math.min(1,f[2])))*R2D+st.altOff, az:norm(Math.atan2(f[0],f[1])*R2D+st.azOff)};
+}
+
+/* ── 相機 ── */
+let stream=null;
+async function startCam(){
+  if(stream) return true;
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false});
+    $('cam').srcObject=stream; await $('cam').play().catch(()=>{});
+    return true;
+  }catch(e){stream=null;return false}
+}
+function stopCam(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;$('cam').srcObject=null}}
+
+/* ── 投影 ── */
+const cv=$('cv'), ctx=cv.getContext('2d');
+let W=0,H=0,dpr=1;
+function resize(){
+  dpr=Math.min(window.devicePixelRatio||1,2); W=innerWidth; H=innerHeight;
+  cv.width=Math.round(W*dpr); cv.height=Math.round(H*dpr); ctx.setTransform(dpr,0,0,dpr,0,0);
+  requestDraw();
+}
+// 相機模式的焦距（像素）：用影片長邊對應的視角換算，再乘數位變焦
+function focalPx(){
+  const v=$('cam'); let longDisp=Math.max(W,H);
+  if(v.videoWidth){const s=Math.max(W/v.videoWidth,H/v.videoHeight);longDisp=Math.max(v.videoWidth,v.videoHeight)*s}
+  return longDisp/2/Math.tan(st.fov/2*D2R)*st.arZoom;
+}
+let FP=600;
+function projAR(az,alt){
+  const A=(az-st.azOff)*D2R, h=(alt-st.altOff)*D2R;
+  const v=[Math.cos(h)*Math.sin(A),Math.cos(h)*Math.cos(A),Math.sin(h)];
+  const dz=dot(v,sensor.f); if(dz<0.1) return null;
+  return {x:W/2+dot(v,sensor.r)/dz*FP, y:H/2-dot(v,sensor.u)/dz*FP};
+}
+function projPano(az,alt){
+  const d=norm(az-st.panoAz+180)-180;
+  return {x:W/2+d*st.ppd, y:H*0.55-(alt-st.panoAlt)*st.ppd};
+}
+const proj=(az,alt)=>st.mode==='ar'?projAR(az,alt):projPano(az,alt);
+function centerDir(){
+  if(st.mode==='ar') return aimDir();
+  return {az:st.panoAz,alt:st.panoAlt+(H*0.55-H/2)/st.ppd};
+}
+
+/* ── 畫 ── */
+let drawPending=false;
+function requestDraw(){if(!drawPending){drawPending=true;requestAnimationFrame(draw)}}
+const DIRS=['北','北北東','東北','東北東','東','東南東','東南','南南東','南','南南西','西南','西南西','西','西北西','西北','北北西'];
+const dirName=az=>DIRS[Math.round(norm(az)/22.5)%16];
+const COL={1:'#ff7a59',2:'#5fd39a',3:'#f2c14e',0:'#d7e3ea'};
+let hits=[];
+function draw(){
+  drawPending=false;
+  ctx.clearRect(0,0,W,H);
+  if(!VIEW) return;
+  const ar=st.mode==='ar';
+  if(ar&&!sensor.f){
+    ctx.fillStyle='rgba(0,0,0,.35)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='18px '+getComputedStyle(document.body).fontFamily;ctx.textAlign='center';
+    ctx.fillText('等 iPad 的方向感測…（電腦上沒有，請用「全景」）',W/2,H/2-40);
+    return;
+  }
+  if(ar) FP=focalPx(); else drawPanoImage();
+  drawSkyline(ar);
+  drawCompass(ar);
+  drawLabels(ar);
+  updateAim();
+  updateHeading();
+}
+function drawPanoImage(){
+  const img=VIEW.img, s=st.ppd/(1/PR.res);           // 圖上 1 格＝0.1 度
+  const x0=W/2-norm(st.panoAz)*st.ppd, yTop=H*0.55-(PR.max-st.panoAlt)*st.ppd, h=PR.rows*s, w=PR.cols*s;
+  // 天空在圖上方延伸
+  const sky=ctx.createLinearGradient(0,0,0,Math.max(1,yTop));
+  sky.addColorStop(0,'#2f4f78'); sky.addColorStop(1,'#37588a');
+  ctx.fillStyle=sky; ctx.fillRect(0,0,W,Math.max(0,yTop)+1);
+  ctx.fillStyle='rgb(34,58,56)'; ctx.fillRect(0,yTop+h-1,W,H);
+  ctx.imageSmoothingEnabled=true;
+  for(let k=-1;k<=1;k++){const x=x0+k*w; if(x<W&&x+w>0) ctx.drawImage(img,x,yTop,w,h)}
+}
+function drawSkyline(ar){
+  const sky=VIEW.sky, n=PR.cols;
+  ctx.lineWidth=ar?2.2:1.6; ctx.strokeStyle=ar?'rgba(255,255,255,.95)':'rgba(10,20,30,.9)';
+  ctx.shadowColor=ar?'rgba(0,0,0,.7)':'transparent'; ctx.shadowBlur=ar?3:0;
+  ctx.beginPath(); let pen=false, last=null;
+  const c0=ar?0:Math.floor((norm(st.panoAz)-W/2/st.ppd-1)/PR.res), c1=ar?n:Math.ceil((norm(st.panoAz)+W/2/st.ppd+1)/PR.res);
+  for(let cc=c0;cc<=c1;cc++){
+    const c=((cc%n)+n)%n, p=proj(cc*PR.res,sky[c]);
+    if(!p||p.x<-50||p.x>W+50||(last&&Math.abs(p.x-last.x)>W/2)){pen=false;last=p;continue}
+    if(pen) ctx.lineTo(p.x,p.y); else {ctx.moveTo(p.x,p.y);pen=true}
+    last=p;
+  }
+  ctx.stroke(); ctx.shadowBlur=0;
+  if(ar){
+    // 相機上疊一層淡淡的山稜線
+    const v=VIEW.edgeVec, f=sensor.f, r=sensor.r, u=sensor.u;
+    const ca=Math.cos(-st.azOff*D2R), sa=Math.sin(-st.azOff*D2R);
+    // 把校正轉回感測座標：只轉方位（高度校正量小，在畫點時加）
+    const dy=-st.altOff*FP*0.0174533;
+    ctx.fillStyle='rgba(255,255,255,.55)';
+    for(let i=0;i<v.length;i+=4){
+      const x=v[i]*ca+v[i+1]*sa, y=-v[i]*sa+v[i+1]*ca, z=v[i+2];
+      const dz=x*f[0]+y*f[1]+z*f[2]; if(dz<0.3) continue;
+      const sx=W/2+(x*r[0]+y*r[1]+z*r[2])/dz*FP; if(sx<0||sx>W) continue;
+      const sy=H/2-(x*u[0]+y*u[1]+z*u[2])/dz*FP-dy; if(sy<0||sy>H) continue;
+      ctx.globalAlpha=v[i+3]*0.8; ctx.fillRect(sx-0.9,sy-0.9,1.8,1.8);
+    }
+    ctx.globalAlpha=1;
+  }
+}
+function drawCompass(ar){
+  ctx.font='600 14px '+getComputedStyle(document.body).fontFamily; ctx.textAlign='center';
+  const y=ar?H-140:Math.min(H-140,H*0.55+(st.panoAlt+8)*st.ppd);
+  for(let a=0;a<360;a+=5){
+    const p=ar?projAR(a,0):projPano(a,0); if(!p||p.x<0||p.x>W) continue;
+    const big=a%45===0, mid=a%15===0;
+    const yy=ar?p.y:y;
+    ctx.strokeStyle='rgba(255,255,255,.7)'; ctx.lineWidth=big?2:1;
+    if(!ar){ctx.beginPath();ctx.moveTo(p.x,yy);ctx.lineTo(p.x,yy+(big?14:mid?9:5));ctx.stroke()}
+    if(big||mid){
+      ctx.fillStyle=big?'#fff':'rgba(255,255,255,.75)';
+      const t=big?DIRS[a/22.5]:a+'°';
+      if(ar){ if(big){ctx.fillText(t,p.x,p.y+22)} }
+      else ctx.fillText(t,p.x,yy+(big?30:24));
+    }
+  }
+  if(ar){ // 地平線（高度 0 度）
+    ctx.setLineDash([6,8]); ctx.strokeStyle='rgba(255,255,255,.35)'; ctx.lineWidth=1; ctx.beginPath();
+    let pen=false;
+    for(let a=0;a<=360;a+=2){const p=projAR(a,0); if(!p){pen=false;continue} if(pen)ctx.lineTo(p.x,p.y); else{ctx.moveTo(p.x,p.y);pen=true}}
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+}
+function shown(v){
+  const p=v.p;
+  if(v.here) return false;
+  if(st.filter==='major'&&!(p.c===1||p.c===2)) return false;
+  if(st.filter==='named'&&!isNamed(p,v)) return false;
+  if(!v.ok) return st.showHidden&&p.c===1&&v.block<6;
+  return true;
+}
+function drawLabels(ar){
+  hits=[];
+  const font=getComputedStyle(document.body).fontFamily;
+  const fs=Math.round(Math.max(14,Math.min(18,Math.min(W,H)/48)));
+  const cand=[];
+  for(const v of VIEW.vis){
+    if(!shown(v)) continue;
+    const p=proj(v.az,v.alt); if(!p||p.x<-20||p.x>W+20||p.y<-40||p.y>H+40) continue;
+    // 越遠的小山越不重要
+    let imp=v.imp-(v.p.c===0?Math.min(150,v.D/1000*3):0)+(v.ok?0:-1200);
+    cand.push({v,x:p.x,y:p.y,imp});
+  }
+  cand.sort((a,b)=>b.imp-a.imp);
+  const placed=[], gap=fs*1.25, topSafe=(ar?70:64)+20;
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  for(const c of cand){
+    if(placed.some(x=>Math.abs(x-c.x)<gap)) continue;
+    const name=c.v.p.n, n=[...name].length;
+    // 標籤底部放在這一帶稜線上方
+    const skyY=localSkyY(c.v.az,ar);
+    let bottom=Math.min(c.y,skyY??c.y)-16-((placed.length%3)*0);
+    const top=bottom-n*fs*1.08-fs*1.3;
+    if(top<topSafe){ if(c.y-n*fs*1.08-fs*1.3-10<topSafe) continue; bottom=topSafe+n*fs*1.08+fs*1.3 }
+    placed.push(c.x);
+    const col=COL[c.v.p.c], ok=c.v.ok;
+    ctx.globalAlpha=ok?1:0.7;
+    // 引線
+    ctx.strokeStyle=ok?'rgba(255,255,255,.85)':'rgba(255,255,255,.6)'; ctx.lineWidth=1.2;
+    if(!ok) ctx.setLineDash([4,4]);
+    ctx.beginPath(); ctx.moveTo(c.x,c.y-3); ctx.lineTo(c.x,bottom); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle=col; ctx.beginPath(); ctx.arc(c.x,c.y,3.5,0,7); ctx.fill();
+    // 直書山名
+    ctx.font=`700 ${fs}px ${font}`;
+    const chars=[...name], tTop=bottom-chars.length*fs*1.08;
+    ctx.lineWidth=3.5; ctx.strokeStyle='rgba(8,16,24,.85)'; ctx.lineJoin='round';
+    chars.forEach((ch,i)=>{const yy=tTop+(i+.5)*fs*1.08; ctx.strokeText(ch,c.x,yy); ctx.fillStyle='#fff'; ctx.fillText(ch,c.x,yy)});
+    // 等級小圓章
+    const by=tTop-fs*0.75;
+    ctx.fillStyle=col; ctx.beginPath(); ctx.arc(c.x,by,fs*0.58,0,7); ctx.fill();
+    ctx.fillStyle='#10202b'; ctx.font=`700 ${Math.round(fs*0.66)}px ${font}`;
+    ctx.fillText(c.v.p.c===1?'百':c.v.p.c===2?'小':c.v.p.c===3?'3K':'山',c.x,by+0.5);
+    ctx.globalAlpha=1;
+    hits.push({x0:c.x-fs*0.8,x1:c.x+fs*0.8,y0:by-fs*0.7,y1:c.y+8,v:c.v});
+  }
+  ctx.textBaseline='alphabetic';
+}
+function localSkyY(az,ar){
+  const n=PR.cols, c=Math.round(norm(az)/PR.res);
+  let best=null;
+  for(let k=-6;k<=6;k++){
+    const cc=((c+k)%n+n)%n, p=proj(cc*PR.res,VIEW.sky[cc]);
+    if(p&&(best==null||p.y<best)) best=p.y;
+  }
+  return best;
+}
+function updateAim(){
+  const box=$('aim'), cd=centerDir();
+  if(!cd){box.style.display='none';return}
+  // 正中間的山：在畫面中線左右一點點範圍內、而且畫得出來的
+  let best=null;
+  for(const h of hits){
+    const dx=Math.abs((h.x0+h.x1)/2-W/2);
+    if(dx<Math.max(26,W*0.03)&&h.v.ok&&(!best||h.v.imp>best.v.imp)) best=h;
+  }
+  if(st.mode!=='ar'){ // 全景模式在中間畫一條細線
+    ctx.strokeStyle='rgba(255,255,255,.35)'; ctx.setLineDash([3,6]); ctx.beginPath(); ctx.moveTo(W/2,70); ctx.lineTo(W/2,H-110); ctx.stroke(); ctx.setLineDash([]);
+  }
+  if(st.calib){box.style.display='none';return}
+  if(best){
+    const v=best.v;
+    box.innerHTML=`正前方：<b>${v.p.n}</b>${v.p.e.toLocaleString()} 公尺．${fmtKm(v.D)}`;
+    box.style.display='block'; box.onclick=()=>openCard(v);
+  }else box.style.display='none';
+}
+function updateHeading(){
+  const cd=centerDir(); const el=$('heading');
+  if(!cd){el.style.display='none';return}
+  el.style.display='block';
+  el.innerHTML=`朝向 <b>${dirName(cd.az)}</b> ${Math.round(norm(cd.az))}°`;
+}
+const fmtKm=m=>m<1000?Math.round(m)+' 公尺':(m<10000?(m/1000).toFixed(1):Math.round(m/1000))+' 公里';
+
+/* ── 卡片 ── */
+function gradeText(p){
+  if(p.c===1){
+    const g=p.g||[];
+    return `<span class="badge b1">台灣百岳</span><span class="tag">百岳裡第 ${p.k} 高</span>`+g.map(x=>`<span class="tag">${x}</span>`).join('');
+  }
+  if(p.c===2) return `<span class="badge b2">台灣小百岳</span><span class="tag">第 ${p.k} 號</span>`+(p.nt?`<span class="tag">${p.nt}</span>`:'');
+  if(p.c===3) return `<span class="badge b3">3000 公尺以上高山</span><span class="tag">不在百岳名單裡</span>`;
+  return `<span class="badge b0">${p.v?'火山':'山峰'}</span>`;
+}
+const GROUP_NOTE={'五嶽':'台灣最有代表性的五座高山','三尖':'山頂最尖的三座','一奇':'山形最奇特的一座','十峻':'十座最險峻的山','三高':'日治時代的三座高山'};
+function openCard(v){
+  const p=v.p, card=$('card');
+  const why=v.ok?'看得到山頂':`被前面的山擋住了（差約 ${v.block<1?v.block.toFixed(1):Math.round(v.block)} 度）`;
+  const groups=(p.g||[]).filter(x=>GROUP_NOTE[x]).map(x=>`${x}：${GROUP_NOTE[x]}`).join('；');
+  card.innerHTML=`<button class="x" data-close>✕</button>
+    <h2>${p.n}</h2>
+    <div>${gradeText(p)}</div>
+    ${groups?`<p class="mute">${groups}</p>`:''}
+    <dl class="facts">
+      <dt>海拔</dt><dd>${p.e.toLocaleString()} 公尺</dd>
+      <dt>距離</dt><dd>${fmtKm(v.D)}（直線）</dd>
+      <dt>方向</dt><dd>在你的${dirName(v.az)}方，${Math.round(v.az)}°</dd>
+      <dt>抬頭</dt><dd>${v.alt>=0?'仰角':'俯角'} ${Math.abs(v.alt).toFixed(1)} 度</dd>
+      ${p.r?`<dt>山脈</dt><dd>${p.r}</dd>`:''}
+      ${p.a?`<dt>別名</dt><dd>${p.a}</dd>`:''}
+      <dt>現在</dt><dd>${why}</dd>
+    </dl>
+    <div>
+      ${st.mode==='ar'?`<button class="btn pri" id="calThis">用這座山校正方向</button>`:`<button class="btn pri" id="goThis">轉到這座山</button>`}
+      ${p.w?`<a class="btn" href="https://zh.wikipedia.org/wiki/${encodeURIComponent(p.w)}" target="_blank" rel="noopener">維基百科</a>`:''}
+    </div>`;
+  openSheet('card');
+  const ct=$('calThis'); if(ct) ct.onclick=()=>{closeSheets();startCalib(v)};
+  const gt=$('goThis'); if(gt) gt.onclick=()=>{closeSheets();st.follow=false;st.panoAz=v.az;st.panoAlt=Math.max(1,v.alt);requestDraw()};
+}
+function openList(){
+  const el=$('list');
+  const rows=VIEW.vis.filter(v=>v.ok&&!v.here&&(v.p.c===1||v.p.c===2||v.p.c===3||(st.filter==='all'?true:isNamed(v.p,v)&&(v.imp>380||v.top))));
+  const f=el.dataset.f||'major';
+  const list=rows.filter(v=>f==='all'||(f==='major'?v.p.c===1||v.p.c===2:v.p.c===f*1)).sort((a,b)=>a.az-b.az);
+  const cnt=c=>rows.filter(v=>v.p.c===c).length;
+  el.innerHTML=`<button class="x" data-close>✕</button><h2>這裡看得到的山</h2>
+    <p class="mute">百岳 ${cnt(1)} 座、小百岳 ${cnt(2)} 座。從北邊開始，順時針排。</p>
+    <div class="seg" id="lf"><button data-v="major">百岳＋小百岳</button><button data-v="1">只看百岳</button><button data-v="all">比較有名的全部</button></div>
+    <ul>${list.map((v,i)=>`<li data-i="${VIEW.vis.indexOf(v)}"><span class="dir">${dirName(v.az)}<br>${Math.round(v.az)}°</span><i class="dot b${v.p.c}"></i><b>${v.p.n}</b><span class="mute">${v.p.e.toLocaleString()} m</span><span class="km">${fmtKm(v.D)}</span></li>`).join('')||'<li>這個位置附近沒有看得到的</li>'}</ul>`;
+  el.querySelectorAll('#lf button').forEach(b=>{b.classList.toggle('on',b.dataset.v===f);b.onclick=()=>{el.dataset.f=b.dataset.v;openList()}});
+  el.querySelectorAll('li[data-i]').forEach(li=>li.onclick=()=>openCard(VIEW.vis[+li.dataset.i]));
+  openSheet('list');
+}
+function openSheet(id){document.querySelectorAll('.sheet').forEach(s=>s.classList.toggle('open',s.id===id))}
+function closeSheets(){document.querySelectorAll('.sheet').forEach(s=>s.classList.remove('open'))}
+document.addEventListener('click',e=>{if(e.target.closest('[data-close]')) closeSheets()});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeSheets();if(st.calib)endCalib()}});
+
+/* ── 校正 ── */
+function hint(html){const h=$('hint'); if(!html){h.style.display='none';return} h.innerHTML=html; h.style.display='block'}
+function startCalib(v){
+  if(st.mode!=='ar'){toast('校正要在「對準山」模式用');return}
+  st.calib=true; st.calPeak=v||null; $('bCal').classList.add('on');
+  if(v){
+    hint(`把畫面中間的十字，對準真正的「${v.p.n}」山頂，再按<br><button class="btn pri" id="calOk">對好了</button><button class="btn" id="calNo">取消</button>`);
+    $('calOk').onclick=()=>{
+      const a=aimDir(); if(!a) return;
+      st.azOff=norm(st.azOff+(v.az-a.az)+180)-180; st.altOff+=v.alt-a.alt;
+      if(Math.abs(st.altOff)>8) st.altOff=0;
+      saveCal(); endCalib(); toast(`校正好了（方向差 ${Math.abs(st.azOff).toFixed(1)} 度）`);
+    };
+  }else{
+    hint(`用手指左右拖曳，讓白色稜線疊到真的山上；上下拖可以調高度。<br>也可以點一座你認得的山，選「用這座山校正方向」。<br><button class="btn pri" id="calOk">好了</button>`);
+    $('calOk').onclick=()=>{saveCal();endCalib()};
+  }
+  $('calNo')&&($('calNo').onclick=endCalib);
+  requestDraw();
+}
+function endCalib(){st.calib=false;st.calPeak=null;$('bCal').classList.remove('on');hint('');requestDraw()}
+function saveCal(){store.set('azOff',st.azOff);store.set('altOff',st.altOff)}
+
+/* ── 手勢：全景拖曳、縮放；相機模式校正時拖曳 ── */
+const ptrs=new Map(); let pinch0=null, moved=false, down=null;
+cv.addEventListener('pointerdown',e=>{cv.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});moved=false;down={x:e.clientX,y:e.clientY,t:Date.now()};
+  if(ptrs.size===2){const [a,b]=[...ptrs.values()];pinch0={d:Math.hypot(a.x-b.x,a.y-b.y),ppd:st.ppd,z:st.arZoom}}});
+cv.addEventListener('pointermove',e=>{
+  const p=ptrs.get(e.pointerId); if(!p) return;
+  const dx=e.clientX-p.x, dy=e.clientY-p.y; p.x=e.clientX; p.y=e.clientY;
+  if(Math.hypot(e.clientX-down.x,e.clientY-down.y)>8) moved=true;
+  if(ptrs.size===2&&pinch0){
+    const [a,b]=[...ptrs.values()], d=Math.hypot(a.x-b.x,a.y-b.y);
+    if(st.mode==='ar') setArZoom(pinch0.z*d/pinch0.d); else setPpd(pinch0.ppd*d/pinch0.d);
+    return;
+  }
+  if(st.mode==='ar'){
+    if(!st.calib||st.calPeak) return;
+    st.azOff-=dx/FP*R2D; st.altOff+=dy/FP*R2D; requestDraw();
+  }else{
+    st.follow=false; st.panoAz=norm(st.panoAz-dx/st.ppd);
+    st.panoAlt=Math.max(-10,Math.min(25,st.panoAlt+dy/st.ppd)); requestDraw();
+  }
+});
+const endPtr=e=>{
+  ptrs.delete(e.pointerId); if(ptrs.size<2) pinch0=null;
+  if(!moved&&down&&Date.now()-down.t<500){
+    const h=hits.find(h=>e.clientX>=h.x0-6&&e.clientX<=h.x1+6&&e.clientY>=h.y0-6&&e.clientY<=h.y1);
+    if(h) openCard(h.v);
+  }
+  if(st.mode==='pano') store.set('panoAz',st.panoAz);
+};
+cv.addEventListener('pointerup',endPtr); cv.addEventListener('pointercancel',endPtr);
+cv.addEventListener('wheel',e=>{e.preventDefault(); if(st.mode==='ar') setArZoom(st.arZoom*Math.exp(-e.deltaY/400)); else setPpd(st.ppd*Math.exp(-e.deltaY/400))},{passive:false});
+function setPpd(v){st.ppd=Math.max(4,Math.min(60,v));zlab();requestDraw()}
+function setArZoom(v){st.arZoom=Math.max(1,Math.min(5,v));$('cam').style.transform=`scale(${st.arZoom})`;zlab();requestDraw()}
+function zlab(){$('zlab').textContent=st.mode==='ar'?st.arZoom.toFixed(1)+'×':Math.round(st.ppd/22*10)/10+'×'}
+$('zin').onclick=()=>st.mode==='ar'?setArZoom(st.arZoom*1.4):setPpd(st.ppd*1.4);
+$('zout').onclick=()=>st.mode==='ar'?setArZoom(st.arZoom/1.4):setPpd(st.ppd/1.4);
+
+/* ── 全景模式跟著 iPad 轉 ── */
+function followTick(){
+  if(st.mode==='pano'&&st.follow&&sensor.f){const a=aimDir(); st.panoAz=a.az; requestDraw()}
+  requestAnimationFrame(followTick);
+}
+
+/* ── 模式切換 ── */
+async function setMode(m){
+  if(m==='ar'){
+    const s=await startSensor();
+    if(s!=='ok'){toast(s==='denied'?'需要允許「動作與方向」才能對準山。<br>可以到「設定 → Safari → 動作與方向取用」打開。':'這台裝置拿不到方向感測，請用「全景」模式。');return}
+    const ok=await startCam();
+    if(!ok) toast('打不開相機，先用沒有相機的方式顯示（稜線還是會跟著 iPad 轉）');
+    st.mode='ar'; document.body.classList.add('ar');
+    if(!store.get('calTold',0)){store.set('calTold',1);setTimeout(()=>toast('第一次用：如果山名跟真的山歪掉，按「🧭 校正」對一下就好'),1200)}
+  }else{
+    stopCam(); st.mode='pano'; document.body.classList.remove('ar'); endCalib();
+  }
+  $('bAr').classList.toggle('on',st.mode==='ar'); $('bPano').classList.toggle('on',st.mode==='pano');
+  zlab(); requestDraw();
+}
+$('bAr').onclick=()=>setMode('ar');
+$('bPano').onclick=async()=>{
+  if(st.mode==='pano'){ // 再按一次＝跟著 iPad 轉
+    const s=await startSensor();
+    if(s==='ok'&&('ondeviceorientation' in window)){st.follow=!st.follow;toast(st.follow?'全景會跟著 iPad 轉':'改成用手指拖曳')}
+    return;
+  }
+  setMode('pano');
+};
+$('bList').onclick=()=>VIEW&&openList();
+$('bLoc').onclick=()=>{openSheet('locSheet');initMap()};
+$('bCal').onclick=()=>st.calib?endCalib():startCalib(null);
+$('bMore').onclick=()=>{syncMore();openSheet('moreSheet')};
+
+/* ── 設定卡 ── */
+function syncMore(){
+  document.querySelectorAll('#segFilter button').forEach(b=>b.classList.toggle('on',b.dataset.v===st.filter));
+  document.querySelectorAll('#segHidden button').forEach(b=>b.classList.toggle('on',+b.dataset.v===+st.showHidden));
+  $('fovV').textContent=st.fov+'°';
+}
+document.querySelectorAll('#segFilter button').forEach(b=>b.onclick=()=>{st.filter=b.dataset.v;store.set('filter',st.filter);syncMore();requestDraw()});
+document.querySelectorAll('#segHidden button').forEach(b=>b.onclick=()=>{st.showHidden=+b.dataset.v;store.set('hidden',st.showHidden);syncMore();requestDraw()});
+$('fovUp').onclick=()=>{st.fov=Math.min(90,st.fov+1);store.set('fov',st.fov);syncMore();requestDraw()};
+$('fovDn').onclick=()=>{st.fov=Math.max(35,st.fov-1);store.set('fov',st.fov);syncMore();requestDraw()};
+$('resetCal').onclick=()=>{st.azOff=0;st.altOff=0;saveCal();toast('方向校正清掉了');requestDraw()};
+
+/* ── 地點 ── */
+function setLoc(lat,lon,place,extra){
+  if(!(lat>G.lat1-G.ny/G.k&&lat<G.lat1&&lon>G.lon0&&lon<G.lon0+G.nx/G.k)){toast('這個位置不在範圍內。目前算得了台灣本島、澎湖、龜山島、綠島、蘭嶼（金門、馬祖還沒有）');return false}
+  st.lat=lat; st.lon=lon; st.place=place||'這裡'; st.extra=extra||0;
+  store.set('loc',{lat,lon,place:st.place,extra:st.extra});
+  recompute(); syncLoc();
+  if(mapObj){mapMk.setLatLng([lat,lon]);mapObj.setView([lat,lon],Math.max(mapObj.getZoom(),11))}
+  return true;
+}
+function syncLoc(){
+  const g=Math.max(0,Math.round(elev(st.lat,st.lon)));
+  $('locChip').innerHTML=`<b>${st.place}</b><small>地面海拔 ${g} 公尺${st.extra?`．高 ${st.extra} 公尺`:`．${st.floor} 樓`}</small>`;
+  $('flV').textContent=st.floor+' 樓';
+  $('flNote').textContent=st.extra?`（${st.place}用 ${st.extra} 公尺計算）`:`眼睛離地約 ${eyeH().toFixed(1)} 公尺`;
+  $('locNow').textContent=`目前：${st.lat.toFixed(4)}, ${st.lon.toFixed(4)}`;
+}
+function recompute(){
+  $('busy').hidden=false;
+  setTimeout(()=>{compute();$('busy').hidden=true;requestDraw();if($('list').classList.contains('open'))openList()},30);
+}
+$('gps').onclick=()=>{
+  if(!navigator.geolocation){toast('這台裝置拿不到位置');return}
+  toast('正在找你的位置…');
+  navigator.geolocation.getCurrentPosition(p=>{
+    hideToast();
+    setLoc(p.coords.latitude,p.coords.longitude,'我現在的位置',0)&&closeSheets();
+  },err=>toast(err.code===1?'沒有允許取用位置。可以到「設定 → 隱私權 → 定位服務 → Safari」打開，或直接在地圖上點。':'找不到位置，請在地圖上點一下'),{enableHighAccuracy:true,timeout:15000,maximumAge:60000});
+};
+$('setHome').onclick=()=>{store.set('home',{lat:st.lat,lon:st.lon,floor:st.floor});toast('設好了，下次打開會從這裡開始')};
+$('goHome').onclick=()=>{const h=store.get('home',null); if(!h){toast('還沒設定我家：先選好位置，再按「把這裡設成我家」');return} st.floor=h.floor||1;store.set('floor',st.floor);setLoc(h.lat,h.lon,'我家',0)&&closeSheets()};
+$('flUp').onclick=()=>{st.floor=Math.min(60,st.floor+1);st.extra=0;store.set('floor',st.floor);syncLoc();debRe()};
+$('flDn').onclick=()=>{st.floor=Math.max(1,st.floor-1);st.extra=0;store.set('floor',st.floor);syncLoc();debRe()};
+let reT=null; function debRe(){clearTimeout(reT);reT=setTimeout(recompute,600)}
+$('presets').innerHTML=PRESETS.map((p,i)=>`<button class="btn" data-i="${i}"><b>${p[0]}</b><br><small class="mute">${p[1]}</small></button>`).join('');
+$('presets').querySelectorAll('button').forEach(b=>b.onclick=()=>{const p=PRESETS[+b.dataset.i]; setLoc(p[2],p[3],p[0],p[4]||0)&&closeSheets()});
+let mapObj=null, mapMk=null;
+function initMap(){
+  if(mapObj||typeof L==='undefined'){setTimeout(()=>mapObj&&mapObj.invalidateSize(),300);return}
+  mapObj=L.map('map',{zoomControl:true,attributionControl:true}).setView([st.lat,st.lon],11);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:17,attribution:'© OpenStreetMap'}).addTo(mapObj);
+  mapMk=L.marker([st.lat,st.lon]).addTo(mapObj);
+  mapObj.on('click',e=>{setLoc(e.latlng.lat,e.latlng.lng,'地圖上選的點',0)});
+  setTimeout(()=>mapObj.invalidateSize(),300);
+}
+
+/* ── 小提示 ── */
+let toastT=null;
+function toast(html){const t=$('toast');t.innerHTML=html;t.style.display='block';clearTimeout(toastT);toastT=setTimeout(hideToast,3800)}
+function hideToast(){$('toast').style.display='none'}
+
+/* ── 開始 ── */
+window.addEventListener('resize',resize);
+window.addEventListener('orientationchange',()=>setTimeout(resize,300));
+(async function(){
+  resize();
+  try{
+    const [_,pk]=await Promise.all([loadDEM(),fetch('peaks.json').then(r=>r.json())]);
+    PEAKS=pk;
+  }catch(e){$('busy').textContent='資料載入失敗，請重新整理一次';return}
+  for(const p of PEAKS) p.imp0=importance(p);
+  const q=new URLSearchParams(location.search);
+  const last=store.get('loc',null), home=store.get('home',null);
+  let L0=last||(home&&{lat:home.lat,lon:home.lon,place:'我家'})||{lat:24.7546,lon:121.758,place:'宜蘭市'};
+  if(q.get('lat')) L0={lat:+q.get('lat'),lon:+q.get('lon'),place:q.get('name')||'網址指定的點',extra:+(q.get('h')||0)};
+  if(q.get('az')) st.panoAz=+q.get('az');
+  st.lat=L0.lat; st.lon=L0.lon; st.place=L0.place; st.extra=L0.extra||0;
+  syncLoc(); zlab();
+  setTimeout(()=>{compute();$('busy').hidden=true;requestDraw()},30);
+  followTick();
+})();
+</script>
+</body>
+</html>
