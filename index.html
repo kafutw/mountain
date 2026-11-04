@@ -51,6 +51,8 @@ body.ar #cam{display:block}
   backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);cursor:pointer;text-align:left}
 #locChip b{font-family:var(--f-display);font-size:17px;font-weight:700;margin-right:6px}
 #locChip small{color:var(--mute);font-size:13px}
+#segFilter{margin-left:auto;background:var(--glass);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-radius:999px;flex:none}
+#segFilter button{padding:9px 14px;white-space:nowrap}
 #heading{margin-left:auto;font-variant-numeric:tabular-nums;cursor:default}
 #heading b{font-family:var(--f-display);font-size:17px}
 
@@ -113,7 +115,8 @@ body.ar #cross{display:block}
 #toast{position:fixed;left:50%;top:40%;transform:translateX(-50%);z-index:40;background:var(--glass);border:1px solid var(--line);border-radius:14px;padding:12px 18px;display:none;max-width:calc(100vw - 32px);text-align:center;line-height:1.6}
 .legend{display:flex;gap:12px;flex-wrap:wrap;font-size:14px;color:var(--mute);margin:8px 0}
 .legend span{display:inline-flex;align-items:center;gap:6px}
-@media (max-width:560px){#bar button{padding:8px 10px;min-width:54px;font-size:14px}#locChip b{font-size:15px}}
+@media (max-width:760px){#top{flex-wrap:wrap}#segFilter{order:3;margin:0 auto}#hint{top:calc(env(safe-area-inset-top,0px) + 116px)}}
+@media (max-width:560px){#bar{flex-wrap:nowrap;gap:5px}#bar button{flex:1 1 0;min-width:0;padding:7px 2px;font-size:13px}#locChip b{font-size:15px}}
 </style>
 </head>
 <body>
@@ -121,6 +124,7 @@ body.ar #cross{display:block}
 <div id="cross"></div>
 <header id="top">
   <button class="chip" id="locChip"><b>載入中</b><small></small></button>
+  <div class="seg" id="segFilter" role="group" aria-label="顯示哪些山"><button data-v="all">全部</button><button data-v="named">有名的</button><button data-v="major">百岳＋小百岳</button></div>
   <div class="chip" id="heading"></div>
 </header>
 <div id="hint"></div>
@@ -152,7 +156,6 @@ body.ar #cross{display:block}
 <section class="sheet" id="moreSheet">
   <button class="x" data-close>✕</button>
   <h2>設定</h2>
-  <div class="row"><span>顯示哪些山</span><div class="seg" id="segFilter"><button data-v="all">全部（小山也標）</button><button data-v="named">比較有名的</button><button data-v="major">只看百岳＋小百岳</button></div></div>
   <div class="row"><span>被前面山擋住的百岳</span><div class="seg" id="segHidden"><button data-v="0">不顯示</button><button data-v="1">用虛線標出來</button></div></div>
   <div class="row"><span>相機視角</span><div class="step"><button id="fovDn">－</button><span id="fovV"></span><button id="fovUp">＋</button></div><span class="mute">山名整排跟真的山對不齊、越旁邊差越多時調這個</span></div>
   <div class="row"><button class="btn" id="resetCal">清除方向校正</button></div>
@@ -642,7 +645,7 @@ function drawLabels(ar){
     cand.push({v,x:p.x,y:p.y,imp});
   }
   cand.sort((a,b)=>b.imp-a.imp);
-  const placed=[], placedLow=[], gap=fs*1.12, topSafe=(ar?70:64)+20;
+  const placed=[], placedLow=[], gap=fs*1.12, topSafe=$('top').getBoundingClientRect().bottom+14;
   const lowLimit=ar?H-150:Math.min(H-140,H*0.55+(st.panoAlt+8)*st.ppd)-6;
   ctx.textAlign='center'; ctx.textBaseline='middle';
   for(const c of cand){
@@ -711,7 +714,7 @@ function updateAim(){
   let best=null;
   const halfDeg=Math.max(22,W*0.02)/(st.mode==='ar'?FP*D2R:st.ppd);
   for(const v of VIEW.vis){
-    if(!v.ok||v.here) continue;
+    if(!v.ok||!shown(v)) continue;
     if(Math.abs(norm(v.az-cd.az+180)-180)<halfDeg&&(!best||v.imp>best.imp)) best=v;
   }
   if(st.mode!=='ar'){ // 全景模式在中間畫一條細線
@@ -1001,7 +1004,7 @@ window.addEventListener('orientationchange',()=>setTimeout(resize,300));
   if(q.get('lat')) L0={lat:+q.get('lat'),lon:+q.get('lon'),place:q.get('name')||'網址指定的點',extra:+(q.get('h')||0)};
   if(q.get('az')) st.panoAz=+q.get('az');
   st.lat=L0.lat; st.lon=L0.lon; st.place=L0.place; st.extra=L0.extra||0;
-  syncLoc(); zlab();
+  syncLoc(); zlab(); syncMore();
   setTimeout(()=>{compute();$('busy').hidden=true;requestDraw();loadHR(st.lat,st.lon)},30);
   followTick();
 })();
