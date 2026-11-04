@@ -152,12 +152,12 @@ body.ar #cross{display:block}
 <section class="sheet" id="moreSheet">
   <button class="x" data-close>✕</button>
   <h2>設定</h2>
-  <div class="row"><span>顯示哪些山</span><div class="seg" id="segFilter"><button data-v="all">全部</button><button data-v="named">比較有名的</button><button data-v="major">只看百岳＋小百岳</button></div></div>
+  <div class="row"><span>顯示哪些山</span><div class="seg" id="segFilter"><button data-v="all">全部（小山也標）</button><button data-v="named">比較有名的</button><button data-v="major">只看百岳＋小百岳</button></div></div>
   <div class="row"><span>被前面山擋住的百岳</span><div class="seg" id="segHidden"><button data-v="0">不顯示</button><button data-v="1">用虛線標出來</button></div></div>
   <div class="row"><span>相機視角</span><div class="step"><button id="fovDn">－</button><span id="fovV"></span><button id="fovUp">＋</button></div><span class="mute">山名整排跟真的山對不齊、越旁邊差越多時調這個</span></div>
   <div class="row"><button class="btn" id="resetCal">清除方向校正</button></div>
   <div class="legend"><span><i class="dot b1"></i>台灣百岳</span><span><i class="dot b2"></i>台灣小百岳</span><span><i class="dot b3"></i>3000 公尺以上（非百岳）</span><span><i class="dot b0"></i>其他山峰</span></div>
-  <p class="mute" style="font-size:14px">地形：AWS Terrain Tiles（約 180 公尺一格）。山名與位置：© OpenStreetMap 貢獻者、維基百科〈臺灣百岳〉〈台灣小百岳〉。算的是「地形會不會擋住」，房子、樹、雲擋住的這裡算不到。</p>
+  <p class="mute" style="font-size:14px">地形：AWS Terrain Tiles（約 180 公尺一格）。山名與位置：© OpenStreetMap 貢獻者、維基百科〈臺灣百岳〉〈台灣小百岳〉、內政部地名資料與三角點（政府資料開放授權條款第 1 版）。太擠時會先標比較重要的，放大就會多標，沒標字的山直接點一下也查得到。算的是「地形會不會擋住」，房子、樹、雲擋住的這裡算不到。</p>
 </section>
 <div id="busy">正在算你看得到哪些山…</div>
 <div id="toast"></div>
@@ -181,7 +181,7 @@ const PRESETS=[
 ];
 const st={
   lat:null,lon:null,place:'',floor:store.get('floor',1),extra:0,
-  mode:'pano',filter:store.get('filter','named'),showHidden:store.get('hidden',0),
+  mode:'pano',filter:store.get('filter2','all'),showHidden:store.get('hidden',0),
   azOff:store.get('azOff',0),altOff:store.get('altOff',0),fov:store.get('fov',62),
   panoAz:store.get('panoAz',210),panoAlt:3,ppd:22,arZoom:1,follow:false,calib:false,calPeak:null
 };
@@ -255,7 +255,7 @@ function rangeKm(p){
   if(p.c===1) return 260;
   if(p.c===2) return 150;
   if(p.c===3) return 200;
-  return Math.max(3,Math.min(90,p.i*10+p.e/80));
+  return Math.max(15,Math.min(120,p.i*15+p.e/40));
 }
 function isNamed(p,v){return p.c>0||p.i>=2.5||(p.e>=1500&&p.i>=1)||(v&&v.top&&v.D<30000)}
 
@@ -308,7 +308,7 @@ function compute(){
     const az=norm(Math.atan2(dx,dy)*R2D);
     if(D<150){vis.push({p,az,alt:-5,D,ok:true,here:true});continue}
     const tP=(p.e-h0-D*D/(2*RE))/D;
-    const ux=dx/D*mLon, uy=dy/D*mLat, stop=D-Math.max(120,D*0.012);
+    const ux=dx/D*mLon, uy=dy/D*mLat, stop=D-Math.max(300,D*0.03);
     let maxT=-1e9;
     for(let d=40;d<stop;d+=Math.max(25,d/200)){
       const h=elev(lat0+d*uy,lon0+d*ux); if(h<0) continue;
@@ -317,8 +317,8 @@ function compute(){
     }
     const alt=Math.atan(tP)*R2D, block=Math.atan(maxT)*R2D-alt;
     // top：這座山就是那個方向的天際線（窗外最前面那排山的山頂）
-    const top=block<0.03&&alt>=sky[Math.round(az/res)%cols]-0.35;
-    vis.push({p,az,alt,D,ok:block<0.03,block,top,imp:importance(p)+(top&&p.c===0?Math.max(0,260-D/1000*8):0)});
+    const top=block<0.08&&alt>=sky[Math.round(az/res)%cols]-0.35;
+    vis.push({p,az,alt,D,ok:block<0.08,block,top,imp:importance(p)+(top&&p.c===0?Math.max(0,260-D/1000*8):0)});
   }
   VIEW={id:++viewSeq,lat0,lon0,g0,h0,dist,colr,sky,edges,vis,img:null,edgeVec:null};
   renderPano();
@@ -642,18 +642,29 @@ function drawLabels(ar){
     cand.push({v,x:p.x,y:p.y,imp});
   }
   cand.sort((a,b)=>b.imp-a.imp);
-  const placed=[], gap=fs*1.25, topSafe=(ar?70:64)+20;
+  const placed=[], placedLow=[], gap=fs*1.12, topSafe=(ar?70:64)+20;
+  const lowLimit=ar?H-150:Math.min(H-140,H*0.55+(st.panoAlt+8)*st.ppd)-6;
   ctx.textAlign='center'; ctx.textBaseline='middle';
   for(const c of cand){
-    if(placed.some(x=>Math.abs(x-c.x)<gap)) continue;
-    const name=c.v.p.n, n=[...name].length;
+    const name=c.v.p.n.replace(/[（(].*$/,''), n=[...name].length;
+    const canUp=!placed.some(x=>Math.abs(x-c.x)<gap), canLow=!placedLow.some(x=>Math.abs(x-c.x)<gap);
+    if(!canUp&&!canLow) continue;
     // 標籤底部放在這一帶稜線上方；上下放不下時改成貼著畫面上緣或下緣，不讓山名消失
+    // 兩排：天際線上的山標在上方；前排的小山（山頭比後面的稜線低很多）標在山頭下方，不跟後面的大山搶位子
     const labH=n*fs*1.08+fs*1.3, botLimit=H-(ar?150:130);
     const skyY=localSkyY(c.v.az,ar);
-    let bottom=Math.min(c.y,skyY??c.y)-16;
-    if(bottom-labH<topSafe) bottom=topSafe+labH;
-    if(bottom>botLimit) bottom=Math.max(topSafe+labH,botLimit);
-    placed.push(c.x);
+    const front=skyY!=null&&c.y-skyY>fs*1.2;
+    const lowFits=c.y>=0&&c.y+14+labH<=lowLimit;
+    let lane=front?(canLow&&lowFits?'low':canUp?'up':null):(canUp?'up':(canLow&&lowFits?'low':null));
+    if(!lane) continue;
+    let bottom;
+    if(lane==='low'){bottom=c.y+14+labH;placedLow.push(c.x)}
+    else{
+      bottom=Math.min(c.y,skyY??c.y)-16;
+      if(bottom-labH<topSafe) bottom=topSafe+labH;
+      if(bottom>botLimit) bottom=Math.max(topSafe+labH,botLimit);
+      placed.push(c.x);
+    }
     const col=COL[c.v.p.c], ok=c.v.ok, top=bottom-labH;
     const py=Math.max(-2,Math.min(H+2,c.y)), off=c.y<0||c.y>H;
     ctx.globalAlpha=ok?1:0.7;
@@ -696,19 +707,20 @@ function localSkyY(az,ar){
 function updateAim(){
   const box=$('aim'), cd=centerDir();
   if(!cd){box.style.display='none';return}
-  // 正中間的山：在畫面中線左右一點點範圍內、而且畫得出來的
+  // 正中間的山：看得到的都算（包含太擠沒標字的小山），有名的優先
   let best=null;
-  for(const h of hits){
-    const dx=Math.abs((h.x0+h.x1)/2-W/2);
-    if(dx<Math.max(26,W*0.03)&&h.v.ok&&(!best||h.v.imp>best.v.imp)) best=h;
+  const halfDeg=Math.max(22,W*0.02)/(st.mode==='ar'?FP*D2R:st.ppd);
+  for(const v of VIEW.vis){
+    if(!v.ok||v.here) continue;
+    if(Math.abs(norm(v.az-cd.az+180)-180)<halfDeg&&(!best||v.imp>best.imp)) best=v;
   }
   if(st.mode!=='ar'){ // 全景模式在中間畫一條細線
     ctx.strokeStyle='rgba(255,255,255,.35)'; ctx.setLineDash([3,6]); ctx.beginPath(); ctx.moveTo(W/2,70); ctx.lineTo(W/2,H-110); ctx.stroke(); ctx.setLineDash([]);
   }
   if(st.calib){box.style.display='none';return}
   if(best){
-    const v=best.v;
-    box.innerHTML=`正前方：<b>${v.p.n}</b>${v.p.e.toLocaleString()} 公尺．${fmtKm(v.D)}`;
+    const v=best;
+    box.innerHTML=`正前方：<b>${v.p.n}</b>${eleText(v.p)}．${fmtKm(v.D)}`;
     box.style.display='block'; box.onclick=()=>openCard(v);
   }else box.style.display='none';
 }
@@ -718,6 +730,7 @@ function updateHeading(){
   el.style.display='block';
   el.innerHTML=`朝向 <b>${dirName(cd.az)}</b> ${Math.round(norm(cd.az))}°`;
 }
+const eleText=p=>(p.ee?'約 ':'')+p.e.toLocaleString()+' 公尺';
 const fmtKm=m=>m<1000?Math.round(m)+' 公尺':(m<10000?(m/1000).toFixed(1):Math.round(m/1000))+' 公里';
 
 /* ── 卡片 ── */
@@ -731,7 +744,7 @@ function gradeText(p){
   return `<span class="badge b0">${p.v?'火山':'山峰'}</span>`;
 }
 const GROUP_NOTE={'五嶽':'台灣最有代表性的五座高山','三尖':'山頂最尖的三座','一奇':'山形最奇特的一座','十峻':'十座最險峻的山','三高':'日治時代的三座高山'};
-function openCard(v){
+function openCard(v,others){
   const p=v.p, card=$('card');
   const why=v.ok?'看得到山頂':`被前面的山擋住了（差約 ${v.block<1?v.block.toFixed(1):Math.round(v.block)} 度）`;
   const groups=(p.g||[]).filter(x=>GROUP_NOTE[x]).map(x=>`${x}：${GROUP_NOTE[x]}`).join('；');
@@ -740,7 +753,7 @@ function openCard(v){
     <div>${gradeText(p)}</div>
     ${groups?`<p class="mute">${groups}</p>`:''}
     <dl class="facts">
-      <dt>海拔</dt><dd>${p.e.toLocaleString()} 公尺</dd>
+      <dt>海拔</dt><dd>${eleText(p)}${p.ee?'<span class="mute">（資料沒有高度，由地形估算）</span>':''}</dd>
       <dt>距離</dt><dd>${fmtKm(v.D)}（直線）</dd>
       <dt>方向</dt><dd>在你的${dirName(v.az)}方，${Math.round(v.az)}°</dd>
       <dt>抬頭</dt><dd>${v.alt>=0?'仰角':'俯角'} ${Math.abs(v.alt).toFixed(1)} 度</dd>
@@ -748,24 +761,27 @@ function openCard(v){
       ${p.a?`<dt>別名</dt><dd>${p.a}</dd>`:''}
       <dt>現在</dt><dd>${why}</dd>
     </dl>
+    ${p.s?`<p><b>名字的由來</b><br>${p.s}<br><span class="mute" style="font-size:14px">出處：內政部地名資料</span></p>`:''}
+    ${others&&others.length?`<p class="mute" style="margin-bottom:4px">這一帶還有：</p><div id="nearBy">${others.map(o=>`<button class="btn" data-i="${VIEW.vis.indexOf(o)}">${o.p.n}</button>`).join('')}</div>`:''}
     <div>
       ${st.mode==='ar'?`<button class="btn pri" id="calThis">用這座山校正方向</button>`:`<button class="btn pri" id="goThis">轉到這座山</button>`}
       ${p.w?`<a class="btn" href="https://zh.wikipedia.org/wiki/${encodeURIComponent(p.w)}" target="_blank" rel="noopener">維基百科</a>`:''}
     </div>`;
   openSheet('card');
+  card.querySelectorAll('#nearBy button').forEach(b=>b.onclick=()=>openCard(VIEW.vis[+b.dataset.i],[v,...others.filter(o=>o!==VIEW.vis[+b.dataset.i])]));
   const ct=$('calThis'); if(ct) ct.onclick=()=>{closeSheets();startCalib(v)};
   const gt=$('goThis'); if(gt) gt.onclick=()=>{closeSheets();st.follow=false;st.panoAz=v.az;st.panoAlt=Math.max(1,v.alt);requestDraw()};
 }
 function openList(){
   const el=$('list');
-  const rows=VIEW.vis.filter(v=>v.ok&&!v.here&&(v.p.c===1||v.p.c===2||v.p.c===3||(st.filter==='all'?true:isNamed(v.p,v)&&(v.imp>380||v.top))));
+  const rows=VIEW.vis.filter(v=>v.ok&&!v.here);
   const f=el.dataset.f||'major';
   const list=rows.filter(v=>f==='all'||(f==='major'?v.p.c===1||v.p.c===2:v.p.c===f*1)).sort((a,b)=>a.az-b.az);
   const cnt=c=>rows.filter(v=>v.p.c===c).length;
   el.innerHTML=`<button class="x" data-close>✕</button><h2>這裡看得到的山</h2>
     <p class="mute">百岳 ${cnt(1)} 座、小百岳 ${cnt(2)} 座。從北邊開始，順時針排。</p>
-    <div class="seg" id="lf"><button data-v="major">百岳＋小百岳</button><button data-v="1">只看百岳</button><button data-v="all">比較有名的全部</button></div>
-    <ul>${list.map((v,i)=>`<li data-i="${VIEW.vis.indexOf(v)}"><span class="dir">${dirName(v.az)}<br>${Math.round(v.az)}°</span><i class="dot b${v.p.c}"></i><b>${v.p.n}</b><span class="mute">${v.p.e.toLocaleString()} m</span><span class="km">${fmtKm(v.D)}</span></li>`).join('')||'<li>這個位置附近沒有看得到的</li>'}</ul>`;
+    <div class="seg" id="lf"><button data-v="major">百岳＋小百岳</button><button data-v="1">只看百岳</button><button data-v="all">全部 ${rows.length} 座</button></div>
+    <ul>${list.map((v,i)=>`<li data-i="${VIEW.vis.indexOf(v)}"><span class="dir">${dirName(v.az)}<br>${Math.round(v.az)}°</span><i class="dot b${v.p.c}"></i><b>${v.p.n}</b><span class="mute">${v.p.ee?'約 ':''}${v.p.e.toLocaleString()} m</span><span class="km">${fmtKm(v.D)}</span></li>`).join('')||'<li>這個位置附近沒有看得到的</li>'}</ul>`;
   el.querySelectorAll('#lf button').forEach(b=>{b.classList.toggle('on',b.dataset.v===f);b.onclick=()=>{el.dataset.f=b.dataset.v;openList()}});
   el.querySelectorAll('li[data-i]').forEach(li=>li.onclick=()=>openCard(VIEW.vis[+li.dataset.i]));
   openSheet('list');
@@ -829,12 +845,42 @@ const endPtr=e=>{
   ptrs.delete(e.pointerId); if(ptrs.size<2) pinch0=null;
   if(!moved&&down&&Date.now()-down.t<500){
     const h=hits.find(h=>e.clientX>=h.x0-6&&e.clientX<=h.x1+6&&e.clientY>=h.y0-6&&e.clientY<=h.y1);
-    if(h) openCard(h.v);
+    if(h) openCard(h.v); else tapMountain(e.clientX,e.clientY);
   }
   if(st.mode==='pano') store.set('panoAz',st.panoAz);
 };
 cv.addEventListener('pointerup',endPtr); cv.addEventListener('pointercancel',endPtr);
 cv.addEventListener('wheel',e=>{e.preventDefault(); if(st.mode==='ar') setArZoom(st.arZoom*Math.exp(-e.deltaY/400)); else setPpd(st.ppd*Math.exp(-e.deltaY/400))},{passive:false});
+// 螢幕上一點對應的方向
+function screenDir(x,y){
+  if(st.mode!=='ar') return {az:norm(st.panoAz+(x-W/2)/st.ppd),alt:st.panoAlt+(H*0.55-y)/st.ppd};
+  if(!sensor.f) return null;
+  const a=(x-W/2)/FP,b=(H/2-y)/FP,f=sensor.f,r=sensor.r,u=sensor.u;
+  const v=nrm([f[0]+a*r[0]+b*u[0],f[1]+a*r[1]+b*u[1],f[2]+a*r[2]+b*u[2]]);
+  return {az:norm(Math.atan2(v[0],v[1])*R2D+st.azOff),alt:Math.asin(Math.max(-1,Math.min(1,v[2])))*R2D+st.altOff};
+}
+// 點在山上：不管有沒有標字，找那個方向最近的山
+function tapMountain(x,y){
+  if(st.calib||!VIEW) return;
+  const d=screenDir(x,y); if(!d) return;
+  const sky=VIEW.sky[Math.round(d.az/PR.res)%PR.cols];
+  if(d.alt>sky+1.5) return;                     // 點在天空上
+  const pxDeg=st.mode==='ar'?FP*D2R:st.ppd;     // 每度幾個像素
+  const reach=Math.max(70/pxDeg,0.4);           // 手指約 70 像素的範圍
+  const c=[];
+  for(const v of VIEW.vis){
+    if(!v.ok||v.here) continue;
+    const da=Math.abs(norm(v.az-d.az+180)-180);
+    if(da<reach) c.push({v,da:Math.hypot(da,(v.alt-d.alt)*0.5)});
+  }
+  if(!c.length){
+    toast('這個方向的資料裡沒有山名。<br>台灣很多小山丘沒有登記正式名字，放大或點旁邊一點試試看');
+    return;
+  }
+  c.sort((a,b)=>a.da-b.da);
+  const list=c.slice(0,7).map(o=>o.v);
+  openCard(list[0],list.slice(1));
+}
 function setPpd(v){st.ppd=Math.max(4,Math.min(60,v));zlab();requestDraw()}
 function setArZoom(v){st.arZoom=Math.max(1,Math.min(5,v));$('cam').style.transform=`scale(${st.arZoom})`;zlab();requestDraw()}
 function zlab(){$('zlab').textContent=st.mode==='ar'?st.arZoom.toFixed(1)+'×':Math.round(st.ppd/22*10)/10+'×'}
@@ -883,7 +929,7 @@ function syncMore(){
   document.querySelectorAll('#segHidden button').forEach(b=>b.classList.toggle('on',+b.dataset.v===+st.showHidden));
   $('fovV').textContent=st.fov+'°';
 }
-document.querySelectorAll('#segFilter button').forEach(b=>b.onclick=()=>{st.filter=b.dataset.v;store.set('filter',st.filter);syncMore();requestDraw()});
+document.querySelectorAll('#segFilter button').forEach(b=>b.onclick=()=>{st.filter=b.dataset.v;store.set('filter2',st.filter);syncMore();requestDraw()});
 document.querySelectorAll('#segHidden button').forEach(b=>b.onclick=()=>{st.showHidden=+b.dataset.v;store.set('hidden',st.showHidden);syncMore();requestDraw()});
 $('fovUp').onclick=()=>{st.fov=Math.min(90,st.fov+1);store.set('fov',st.fov);syncMore();requestDraw()};
 $('fovDn').onclick=()=>{st.fov=Math.max(35,st.fov-1);store.set('fov',st.fov);syncMore();requestDraw()};
